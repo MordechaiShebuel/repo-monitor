@@ -1,0 +1,118 @@
+﻿This conversation was generated with Duck.ai (https://duck.ai) using Anthropic's Claude Haiku 5.5 Model. AI chats may display inaccurate or offensive information (see https://duckduckgo.com/duckai/privacy-terms for more info).
+
+====================
+
+User prompt 1 of 3 - 11/4/2026, 7:28:57 AM:
+I installed Postgresql on Void, is there something more I need to do to make sure I can run it? When I type `createdb` it doesn't recognize the command.
+
+Claude Haiku 5.5:
+<!--  -->
+Installing the package may not have put `createdb` on your PATH, and on Void you also have to initialize the database and start the service yourself. Start by finding where the client tools went:
+
+```
+which createdb
+xbps-query -f postgresql | grep -E 'bin/(createdb|initdb|psql)'
+```
+
+If the tools are in a versioned directory such as `/usr/lib/postgresql/<version>/bin`, you can add that to your PATH in `~/.bashrc` or `~/.zshrc`:
+
+```
+export PATH="/usr/lib/postgresql/<version>/bin:$PATH"
+```
+
+Then open a new shell or run `source ~/.bashrc`.
+
+Next, check that the data directory exists and initialize it if it doesn't. Void's package creates a `postgres` system user, so run `initdb` as that user:
+
+```
+sudo mkdir -p /var/lib/postgresql/data
+sudo chown postgres:postgres /var/lib/postgresql/data
+sudo -u postgres initdb -D /var/lib/postgresql/data
+```
+
+Finally, enable the runit service and start it:
+
+```
+sudo ln -s /etc/sv/postgresql /var/service/
+sudo sv up postgresql
+sudo sv status postgresql
+```
+
+If the status says `run:`, the server is running. Then create a database for your own user:
+
+```
+sudo -u postgres createuser --interactive $USER
+createdb $USER
+psql
+```
+
+I'm working from memory on the exact binary paths and data directory for Void's package, so if `xbps-query` shows different locations, trust that output over my suggestions. If something fails, paste the error and your Void package version (`xbps-query postgresql`) and I can help narrow it down.
+
+--------------------
+
+User prompt 2 of 3 - 11/4/2026, 7:34:10 AM:
+I don't see createdb in bin?
+
+lib cd psql18
+➜  psql18 ls
+bin  lib  share
+➜  psql18 cd bin
+➜  bin ls
+initdb      pg_archivecleanup  pgbench       pg_combinebackup  pg_createsubscriber  pg_receivewal   pg_resetwal  pg_test_fsync   pg_upgrade       pg_waldump     postgres
+pg_amcheck  pg_basebackup      pg_checksums  pg_controldata    pg_ctl               pg_recvlogical  pg_rewind    pg_test_timing  pg_verifybackup  pg_walsummary
+
+Claude Haiku 5.5:
+<!--  -->
+That listing has the server tools (`initdb`, `pg_ctl`, `pg_upgrade`, and so on), but none of the client tools such as `createdb`, `psql`, `createuser`, or `pg_dump`. Void appears to ship those in a separate package, so the server install is fine and you just need the client side.
+
+Check which PostgreSQL packages are available:
+
+```
+xbps-query -Rs postgresql
+```
+
+Look for a client or libs subpackage matching version 18, then install it. The name is probably something like `postgresql18-client` or `postgresql18-libs`, but confirm it in the search output:
+
+```
+sudo xbps-install -S postgresql18-client
+```
+
+Afterward, check that the tools are there:
+
+```
+which createdb psql
+```
+
+I'm not certain of the exact package name, so use what the search returns. If nothing client-related shows up, tell me the output and we can work from there.
+
+--------------------
+
+User prompt 3 of 3 - 11/4/2026, 7:38:01 AM:
+It appears I don't have a password setup in the server:
+createdb managed_apps
+psql postgres://localhost/managed_apps -f schema.sql
+
+createdb: error: connection to server on socket "/tmp/.s.PGSQL.5432" failed: FATAL:  role "mshalom" does not exist
+Password for user mshalom:
+psql: error: connection to server at "localhost" (::1), port 5432 failed: FATAL:  password authentication failed for user "mshalom"
+
+Claude Haiku 5.5:
+<!--  -->
+The problem is that the PostgreSQL role `mshalom` doesn't exist yet, so the server has no account to log in with. The password prompt is a second symptom: the TCP connection to `localhost` requires a password, and you don't have one set. Create the role as the `postgres` superuser and give it a password:
+
+```
+sudo -u postgres createuser -s -P mshalom
+```
+
+The `-s` flag makes the role a superuser, which is convenient for a local development setup. The `-P` flag prompts you to set a password, so choose one you'll remember.
+
+Then create the database and load your schema:
+
+```
+createdb managed_apps
+psql postgres://mshalom@localhost/managed_apps -f schema.sql
+```
+
+Enter the password you just set when prompted. If you'd rather not type it each time, you can add a line to `~/.pgpass` in the form `localhost:5432:*:mshalom:yourpassword` and run `chmod 600 ~/.pgpass`.
+
+If you'd prefer not to use a password, you can connect over the Unix socket instead. That works when the PostgreSQL role has the same name as your Linux user, which it now does, so `psql managed_apps -f schema.sql` should connect without a password.
